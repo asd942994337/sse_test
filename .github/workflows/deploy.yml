@@ -1,0 +1,63 @@
+name: Deploy
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Check deploy secrets
+        id: check
+        run: |
+          if [ -z "${{ secrets.DEPLOY_HOST }}" ] || [ -z "${{ secrets.DEPLOY_SSH_KEY }}" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "::warning::DEPLOY_HOST / DEPLOY_SSH_KEY 未配置，跳过部署"
+          fi
+
+      - name: Package
+        if: steps.check.outputs.skip != 'true'
+        run: |
+          tar -czf /tmp/app.tgz \
+            --exclude=node_modules \
+            --exclude=web/node_modules \
+            --exclude=dist \
+            --exclude=web/dist \
+            --exclude=.git \
+            --exclude='*.log' \
+            --exclude='.env*' \
+            .
+
+      - name: Setup SSH
+        if: steps.check.outputs.skip != 'true'
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -p "${{ secrets.DEPLOY_PORT || 22 }}" -H "${{ secrets.DEPLOY_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Upload
+        if: steps.check.outputs.skip != 'true'
+        run: |
+          scp -P "${{ secrets.DEPLOY_PORT || 22 }}" /tmp/app.tgz \
+            "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:/tmp/hello-stack.tgz"
+
+      - name: Deploy
+        if: steps.check.outputs.skip != 'true'
+        run: |
+          ssh -p "${{ secrets.DEPLOY_PORT || 22 }}" \
+            "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" \
+            "bash -s /tmp/hello-stack.tgz" < scripts/deploy-remote.sh

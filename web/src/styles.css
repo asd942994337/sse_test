@@ -1226,6 +1226,19 @@ a {
   }
 }
 
+/* ---------------- 分区「显示更多」 ---------------- */
+.load-more {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 14px 0 6px;
+}
+
+.load-more .btn {
+  padding: 8px 16px;
+  font-size: 12.5px;
+}
+
 /* ---------------- 角色图鉴 ---------------- */
 .char-toolbar {
   display: flex;

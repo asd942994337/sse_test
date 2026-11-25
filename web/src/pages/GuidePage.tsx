@@ -14,6 +14,9 @@ const TABS: Array<{ key: TabKey; label: string }> = [
 
 const BASE_TAGS = new Set(["收集", "支线", "主线", "流程"]);
 
+/** 每个分区默认渲染多少条，避免一次挂几百个 DOM 节点 */
+const PAGE = 20;
+
 export function GuidePage() {
   const { slug = "" } = useParams();
   const [params] = useSearchParams();
@@ -27,6 +30,8 @@ export function GuidePage() {
   const [sub, setSub] = useState<string>("");
   const [onlyTodo, setOnlyTodo] = useState(false);
   const [showTop, setShowTop] = useState(false);
+  const [shown, setShown] = useState<Record<string, number>>({});
+  const [expandAll, setExpandAll] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -90,7 +95,25 @@ export function GuidePage() {
     el.classList.add("is-focus");
     const timer = setTimeout(() => el.classList.remove("is-focus"), 2200);
     return () => clearTimeout(timer);
-  }, [focus, data]);
+  }, [focus, data, shown]);
+
+  // 深链跳到某个条目时，先把它的分区展开到那条
+  useEffect(() => {
+    if (!focus || sections.length === 0) return;
+    for (const s of sections) {
+      const idx = s.items.findIndex((it) => it.id === focus);
+      if (idx >= 0) {
+        setShown((p) => ({ ...p, [s.name]: Math.max(p[s.name] ?? PAGE, idx + 1) }));
+        break;
+      }
+    }
+  }, [focus, sections]);
+
+  // 切游戏 / 切标签 / 改筛选时，分页状态归零
+  useEffect(() => {
+    setShown({});
+    setExpandAll(false);
+  }, [slug, tab, sub, onlyTodo]);
 
   const subStats = useMemo(() => {
     const m = new Map<string, number>();
@@ -232,6 +255,13 @@ export function GuidePage() {
         >
           {onlyTodo ? "显示全部" : "只看未完成"}
         </button>
+        <button
+          className={`subtab ${expandAll ? "on" : ""}`}
+          onClick={() => setExpandAll((v) => !v)}
+          title="一次展开所有条目"
+        >
+          {expandAll ? "收起列表" : "展开全部"}
+        </button>
         <span className="guide-count">
           共 {total} 条 · 已完成 {done}
         </span>
@@ -283,7 +313,11 @@ export function GuidePage() {
             </p>
           )}
 
-          {visible.map((s, si) => (
+          {visible.map((s, si) => {
+            const sectionTotal = s.items.length;
+            const count = expandAll ? sectionTotal : Math.max(PAGE, shown[s.name] ?? PAGE);
+            const items = s.items.slice(0, count);
+            return (
             <section key={s.name} id={`sec-${tab}-${si}`} className="sec">
               <h2 className="sec-title">
                 {s.name}
@@ -293,7 +327,7 @@ export function GuidePage() {
                 <span className="sec-line" />
               </h2>
 
-              {s.items.map((it, idx) => (
+              {items.map((it, idx) => (
                 <article
                   key={it.id}
                   id={`entry-${it.id}`}
@@ -325,8 +359,23 @@ export function GuidePage() {
                   <div className="entry-body">{it.body}</div>
                 </article>
               ))}
+
+              {count < sectionTotal && (
+                <div className="load-more">
+                  <button
+                    className="btn"
+                    onClick={() => setShown((p) => ({ ...p, [s.name]: count + PAGE }))}
+                  >
+                    显示更多（还有 {sectionTotal - count} 条）
+                  </button>
+                  <button className="btn btn-ghost" onClick={() => setExpandAll(true)}>
+                    全部展开
+                  </button>
+                </div>
+              )}
             </section>
-          ))}
+            );
+          })}
         </div>
       </div>
 

@@ -110,6 +110,38 @@ item("oot-xxx", "成年篇", "标题", "主线,迷宫", `正文……`)
 `/characters?c=<slug>` 可以直接分享某个角色的详情。
 立绘与梯度整理自 annasnotebook.net，版权归任天堂 / Intelligent Systems。
 
+## CI / CD
+
+仓库里带了两条 GitHub Actions：
+
+- `.github/workflows/ci.yml`：每次 push / PR 跑 `npm ci`、API 构建、`npm run check`（内容体检）、前端构建；
+- `.github/workflows/deploy.yml`：`main` 的 CI 成功后，打包 → scp → ssh 执行 `scripts/deploy-remote.sh`（换目录、`docker compose up -d --build`、就绪检查、失败自动回滚）。
+
+启用自动部署需要加 3 个仓库 Secret（Settings → Secrets and variables → Actions）：
+
+| Secret | 值 |
+|---|---|
+| `DEPLOY_HOST` | `120.25.123.48` |
+| `DEPLOY_USER` | `root` |
+| `DEPLOY_SSH_KEY` | 部署私钥全文（`-----BEGIN OPENSSH PRIVATE KEY-----` 开头） |
+| `DEPLOY_PORT`（可选） | 默认 22 |
+
+建议专门生成一把部署密钥，不要用个人主密钥：
+
+```powershell
+ssh-keygen -t ed25519 -f .\deploy_key -N ""
+ssh root@120.25.123.48 "mkdir -p ~/.ssh && cat >> ~/.ssh/authorized_keys" < .\deploy_key.pub
+# 把 deploy_key 的内容填进 DEPLOY_SSH_KEY，然后删掉本地文件
+```
+
+没配 Secret 时 Deploy 工作流会输出警告并跳过，不会报红。
+
+手动部署仍然可用：
+
+```powershell
+.\deploy.ps1
+```
+
 ## 部署
 
 ```powershell
