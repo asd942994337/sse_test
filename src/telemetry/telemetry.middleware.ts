@@ -14,6 +14,28 @@ const IGNORE = new Set([
 /** 流式接口天然耗时长，不能用「慢请求」的标准衡量 */
 const STREAMING = new Set(["/api/rag/chat"]);
 
+/**
+ * 洪水保护：同一个路径每分钟最多记这么多条。
+ *
+ * 压测/扫描打过来时，每个 4xx 都会触发一次 INSERT —— 朋友的压测发了 7,283 个 404，
+ * events 表直接从 2,353 涨到 8,097。异常洪水的价值是「知道出事了」，
+ * 不是「每一发都留档」，所以这里按路径限量。
+ */
+const MAX_PER_PATH_PER_MIN = 30;
+const budget = new Map<string, { n: number; resetAt: number }>();
+
+function allowRecording(path: string): boolean {
+  const now = Date.now();
+  const b = budget.get(path);
+  if (!b || now > b.resetAt) {
+    budget.set(path, { n: 1, resetAt: now + 60_000 });
+    return true;
+  }
+  if (b.n >= MAX_PER_PATH_PER_MIN) return false;
+  b.n += 1;
+  return true;
+}
+
 /** 经过 nginx 时真实 IP 在 X-Forwarded-For 的第一段 */
 export function clientIp(req: Request): string {
   const xff = String(req.headers["x-forwarded-for"] || "").split(",")[0].trim();
@@ -48,6 +70,10 @@ export class TelemetryMiddleware implements NestMiddleware {
       // 只记异常和慢请求：正常的 200 不值钱，全记会把表撑爆
       const isSlow = ms > 1200 && !STREAMING.has(path);
       if (!isError && !isSlow) return;
+
+      // 429 是我们自己的节流兜底，不是业务异常；被限速的洪水更不该再写一行
+      if (status === 429) return;
+      if (!allowRecording(path)) return;
 
       this.telemetry.record({
         kind: isError ? "error" : "api",
