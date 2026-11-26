@@ -33,11 +33,18 @@ export class SettingsService implements OnModuleInit {
   // ---------------------------------------------------------------------------
   //  加解密
   // ---------------------------------------------------------------------------
+  // scrypt 派生一次就够：它同样占主线程（几十毫秒），status()/加密/解密都会被调用，
+  // 每次重算等于给每个请求收一次过路费。APP_SECRET 变了才重算。
+  private keyCache: { secret: string; key: Buffer } | null = null;
+
   private aesKey(): Buffer | null {
     const secret = (process.env.APP_SECRET || "").trim();
     if (secret.length < 16) return null;
     // scrypt 把任意长度的口令派生成 32 字节的 AES 密钥
-    return crypto.scryptSync(secret, "hello-stack-rag-v1", 32);
+    if (this.keyCache?.secret !== secret) {
+      this.keyCache = { secret, key: crypto.scryptSync(secret, "hello-stack-rag-v1", 32) };
+    }
+    return this.keyCache.key;
   }
 
   private encrypt(plain: string): string | null {

@@ -69,6 +69,11 @@ cd "$APP"
 docker compose up -d --build || rollback
 
 echo "[deploy] wait for readiness"
+# nginx 配置是 bind mount 进容器的：换了目录、配置改了，容器里跑的还是旧配置，
+# 必须 reload 一次才生效（挂了也不影响站点，旧 worker 继续服务）
+docker compose exec -T web nginx -s reload >/dev/null 2>&1 \
+  && echo "[deploy] nginx reloaded" \
+  || echo "[deploy] nginx reload skipped"
 for _ in $(seq 1 30); do
   code=$(curl -s -o /dev/null -w '%{http_code}' -m 5 "http://127.0.0.1:$PORT/api/ready" || true)
   if [ "$code" = "200" ]; then

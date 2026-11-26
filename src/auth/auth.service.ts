@@ -1,5 +1,5 @@
 import { Injectable } from "@nestjs/common";
-import { randomBytes, scryptSync, timingSafeEqual } from "crypto";
+import { randomBytes, scrypt, timingSafeEqual } from "crypto";
 import { DbService } from "../db/db.service";
 
 export const COOKIE = "sid";
@@ -7,14 +7,27 @@ const TTL_DAYS = 30;
 
 export type AuthUser = { id: number; username: string; role: string };
 
-export function hashPassword(password: string, salt = randomBytes(16).toString("hex")) {
-  return `${salt}:${scryptSync(password, salt, 64).toString("hex")}`;
+// scrypt 的默认代价参数（N=16384, r=8, p=1）保持不变：
+// 库里已有的 hash 就是这套参数算的，改了旧密码就登不进来。
+//
+// 但必须用**异步**版本。scryptSync 会占住 Node 唯一的主线程，一次校验 ~50ms；
+// 几十个并发登录就是「整站排队」——连 /api/health 都跟着卡，
+// 压测里 30 并发登录时健康探测从 3ms 涨到 1691ms 就是这个原因。
+// 异步版跑在 libuv 线程池里，事件循环照常处理别的请求。
+function derive(password: string, salt: string, keylen: number): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    scrypt(password, salt, keylen, (err, key) => (err ? reject(err) : resolve(key as Buffer)));
+  });
 }
 
-export function verifyPassword(password: string, stored: string) {
+export async function hashPassword(password: string, salt = randomBytes(16).toString("hex")) {
+  return `${salt}:${(await derive(password, salt, 64)).toString("hex")}`;
+}
+
+export async function verifyPassword(password: string, stored: string) {
   const [salt, hex] = String(stored || "").split(":");
   if (!salt || !hex) return false;
-  const candidate = scryptSync(password, salt, 64);
+  const candidate = await derive(password, salt, 64);
   const expected = Buffer.from(hex, "hex");
   return candidate.length === expected.length && timingSafeEqual(candidate, expected);
 }

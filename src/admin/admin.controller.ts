@@ -83,10 +83,11 @@ export class AdminController {
       return { ok: false, error: "密码至少 8 位" };
     }
 
+    const passwordHash = await hashPassword(password);
     try {
       await this.db.db.query("INSERT INTO users (username, password_hash, role) VALUES (?,?,?)", [
         username,
-        hashPassword(password),
+        passwordHash,
         role,
       ]);
     } catch (err: any) {
@@ -115,7 +116,7 @@ export class AdminController {
       await this.db.db.query("UPDATE users SET role = ? WHERE id = ?", [body.role, uid]);
     }
     if (typeof body?.password === "string" && body.password.length >= 8) {
-      await this.db.db.query("UPDATE users SET password_hash = ? WHERE id = ?", [hashPassword(body.password), uid]);
+      await this.db.db.query("UPDATE users SET password_hash = ? WHERE id = ?", [await hashPassword(body.password), uid]);
       // 改密码后踢掉该用户所有会话
       await this.db.db.query("DELETE FROM sessions WHERE user_id = ?", [uid]);
     }
