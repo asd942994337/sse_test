@@ -16,29 +16,38 @@ jobs:
     if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     environment: production
+    env:
+      # 主机 / 用户 / 端口都不是秘密（README 里就写着），所以给默认值：
+      # Secrets 里配了同名项就覆盖，没配也能跑 —— 这样 CD 只需要一个 DEPLOY_SSH_KEY。
+      DEPLOY_HOST: ${{ secrets.DEPLOY_HOST || '120.25.123.48' }}
+      DEPLOY_USER: ${{ secrets.DEPLOY_USER || 'root' }}
+      DEPLOY_PORT: ${{ secrets.DEPLOY_PORT || '22' }}
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
-      - name: Check deploy secrets
+      - name: Check deploy key
         id: check
         run: |
-          missing=""
-          if [ -z "${{ secrets.DEPLOY_HOST }}" ]; then missing="$missing DEPLOY_HOST"; fi
-          if [ -z "${{ secrets.DEPLOY_USER }}" ]; then missing="$missing DEPLOY_USER"; fi
-          if [ -z "${{ secrets.DEPLOY_SSH_KEY }}" ]; then missing="$missing DEPLOY_SSH_KEY"; fi
-          if [ -n "$missing" ]; then
+          target="$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PORT"
+          if [ -z "${{ secrets.DEPLOY_SSH_KEY }}" ]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "::warning::缺少 Secrets:$missing —— 跳过部署"
+            echo "::warning::缺少 Secret: DEPLOY_SSH_KEY —— 跳过部署"
             {
               echo "### ⚠️ 部署已跳过"
               echo ""
-              echo "缺少 Secrets:\`$missing\`"
+              echo "缺少 Secret：\`DEPLOY_SSH_KEY\`（部署私钥全文，\`-----BEGIN OPENSSH PRIVATE KEY-----\` 开头）"
               echo ""
-              echo "到 Settings → Secrets and variables → Actions 补齐后，重新运行本工作流。"
+              echo "目标主机：\`$target\`"
+              echo ""
+              echo "到 Settings → Secrets and variables → Actions 补上后，重新运行本工作流。"
             } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
           fi
+          echo "### 🚀 部署到 \`$target\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "commit：\`$GITHUB_SHA\`" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Package
         if: steps.check.outputs.skip != 'true'
@@ -51,7 +60,9 @@ jobs:
             --exclude=.git \
             --exclude='*.log' \
             --exclude='.env*' \
+            --exclude='.rag-config.json' \
             .
+          ls -lh /tmp/app.tgz
 
       - name: Setup SSH
         if: steps.check.outputs.skip != 'true'
@@ -59,17 +70,18 @@ jobs:
           mkdir -p ~/.ssh
           echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
-          ssh-keyscan -p "${{ secrets.DEPLOY_PORT || 22 }}" -H "${{ secrets.DEPLOY_HOST }}" >> ~/.ssh/known_hosts
+          ssh-keyscan -p "$DEPLOY_PORT" -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts
 
       - name: Upload
         if: steps.check.outputs.skip != 'true'
         run: |
-          scp -P "${{ secrets.DEPLOY_PORT || 22 }}" /tmp/app.tgz \
-            "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:/tmp/hello-stack.tgz"
+          scp -P "$DEPLOY_PORT" /tmp/app.tgz \
+            "$DEPLOY_USER@$DEPLOY_HOST:/tmp/hello-stack.tgz"
 
       - name: Deploy
         if: steps.check.outputs.skip != 'true'
         run: |
-          ssh -p "${{ secrets.DEPLOY_PORT || 22 }}" \
-            "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" \
-            "bash -s /tmp/hello-stack.tgz" < scripts/deploy-remote.sh
+          # $1 = 归档路径；$2 = 来源标记，落在服务器 /opt/hello-stack/.deploy 里，
+          # 这样不用翻 Actions 日志也能在服务器上看出「这一版是 CI 部署的还是手动部署的」
+          ssh -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" \
+            "bash -s /tmp/hello-stack.tgz github-actions" < scripts/deploy-remote.sh

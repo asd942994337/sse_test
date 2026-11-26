@@ -117,14 +117,20 @@ item("oot-xxx", "成年篇", "标题", "主线,迷宫", `正文……`)
 - `.github/workflows/ci.yml`：每次 push / PR 跑 `npm ci`、API 构建、`npm run check`（内容体检）、前端构建；
 - `.github/workflows/deploy.yml`：`main` 的 CI 成功后，打包 → scp → ssh 执行 `scripts/deploy-remote.sh`（换目录、`docker compose up -d --build`、就绪检查、失败自动回滚）。
 
-启用自动部署需要加 3 个仓库 Secret（Settings → Secrets and variables → Actions）：
+**自动部署只要一个 Secret**（Settings → Secrets and variables → Actions）：
 
 | Secret | 值 |
 |---|---|
+| `DEPLOY_SSH_KEY` | 部署私钥全文（`-----BEGIN OPENSSH PRIVATE KEY-----` 开头） |
+
+主机、用户、端口不算秘密，工作流里已经写成默认值（`120.25.123.48` / `root` / `22`），
+想换目标时再加同名 Secret 覆盖即可，不用改文件：
+
+| Secret（可选，覆盖默认值） | 默认值 |
+|---|---|
 | `DEPLOY_HOST` | `120.25.123.48` |
 | `DEPLOY_USER` | `root` |
-| `DEPLOY_SSH_KEY` | 部署私钥全文（`-----BEGIN OPENSSH PRIVATE KEY-----` 开头） |
-| `DEPLOY_PORT`（可选） | 默认 22 |
+| `DEPLOY_PORT` | `22` |
 
 建议专门生成一把部署密钥，不要用个人主密钥：
 
@@ -134,7 +140,17 @@ ssh root@120.25.123.48 "mkdir -p ~/.ssh && cat >> ~/.ssh/authorized_keys" < .\de
 # 把 deploy_key 的内容填进 DEPLOY_SSH_KEY，然后删掉本地文件
 ```
 
-没配 Secret 时 Deploy 工作流会输出警告并跳过，不会报红。
+没配 `DEPLOY_SSH_KEY` 时 Deploy 工作流会输出警告并跳过，不会报红。
+
+部署成功后服务器上会留一个指纹文件，用来确认这一版到底是谁部署的：
+
+```bash
+cat /opt/hello-stack/.deploy
+# {"at":"2026-11-26T10:51:23+08:00","source":"github-actions","archive":"hello-stack.tgz"}
+```
+
+`source` 是 `github-actions` 就是 CI/CD 跑的，`local-sim` 是本机模拟、`manual` 是手动调用
+`scripts/deploy-remote.sh`。时间戳比最后一次 push 新，就说明 CD 真的跑通了。
 
 手动部署仍然可用：
 
