@@ -6,7 +6,7 @@
 #   ssh root@host "bash -s /tmp/hello-stack.tgz github-actions" < scripts/deploy-remote.sh
 #
 # $1 = 归档路径（必填）
-# $2 = 来源标记，默认 manual；会写进 $APP/.deploy，方便事后判断「这一版是谁部署的」
+# $2 = 来源标记，默认 manual；写进应用目录的 .deploy 指纹，事后不看日志也能判断这版是谁部署的
 #
 set -euo pipefail
 
@@ -23,12 +23,33 @@ PREV="$ROOT/$NAME.prev"
 NEXT="$ROOT/$NAME.next"
 FAILED="$ROOT/$NAME.failed"
 
+# marker <文件> <阶段>：phase=started 是「开始了」，phase=ok 是「健康检查过了」
+marker() {
+  printf '{"at":"%s","source":"%s","archive":"%s","phase":"%s"}\n' \
+    "$(date -Is)" "$SOURCE" "$ARCHIVE_NAME" "$2" > "$1"
+}
+
+rollback() {
+  echo "[deploy] rolling back to previous version" >&2
+  rm -rf "$FAILED"
+  mv "$APP" "$FAILED"
+  if [ -d "$PREV" ]; then
+    mv "$PREV" "$APP"
+    cd "$APP"
+    docker compose up -d --build || true
+  fi
+  exit 1
+}
+
 echo "[deploy] source=$SOURCE archive=$ARCHIVE_NAME"
 echo "[deploy] unpack $ARCHIVE"
 rm -rf "$NEXT"
 mkdir -p "$NEXT"
 tar -xzf "$ARCHIVE" -C "$NEXT"
 rm -f "$ARCHIVE"
+
+# 先留一条「开始了」的痕迹：只有 .deploy.started 没有 .deploy，说明这次中途挂了
+marker "$NEXT/.deploy.started" started
 
 # 保留正在运行版本的 .env（API Key 等），归档里不含 .env
 if [ -f "$APP/.env" ]; then
@@ -44,15 +65,14 @@ mv "$NEXT" "$APP"
 
 echo "[deploy] docker compose up -d --build"
 cd "$APP"
-docker compose up -d --build
+# 构建失败也要回到上一版：否则新代码已经落地、容器还是旧的，最容易被误判成「部署成功」
+docker compose up -d --build || rollback
 
 echo "[deploy] wait for readiness"
 for _ in $(seq 1 30); do
   code=$(curl -s -o /dev/null -w '%{http_code}' -m 5 "http://127.0.0.1:$PORT/api/ready" || true)
   if [ "$code" = "200" ]; then
-    # 部署指纹：不翻 Actions 日志也能看出最后一版的时间 / 来源 / 归档名
-    printf '{"at":"%s","source":"%s","archive":"%s"}\n' \
-      "$(date -Is)" "$SOURCE" "$ARCHIVE_NAME" > "$APP/.deploy"
+    marker "$APP/.deploy" ok
     echo "[deploy] ok, health 200"
     cat "$APP/.deploy"
     exit 0
@@ -60,12 +80,5 @@ for _ in $(seq 1 30); do
   sleep 2
 done
 
-echo "[deploy] health check failed, rolling back" >&2
-rm -rf "$FAILED"
-mv "$APP" "$FAILED"
-if [ -d "$PREV" ]; then
-  mv "$PREV" "$APP"
-  cd "$APP"
-  docker compose up -d --build || true
-fi
-exit 1
+echo "[deploy] health check failed" >&2
+rollback

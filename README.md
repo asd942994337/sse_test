@@ -142,15 +142,18 @@ ssh root@120.25.123.48 "mkdir -p ~/.ssh && cat >> ~/.ssh/authorized_keys" < .\de
 
 没配 `DEPLOY_SSH_KEY` 时 Deploy 工作流会输出警告并跳过，不会报红。
 
-部署成功后服务器上会留一个指纹文件，用来确认这一版到底是谁部署的：
+部署会在应用目录里留一个指纹文件，用来确认这一版到底是谁部署的：
 
 ```bash
 cat /opt/hello-stack/.deploy
-# {"at":"2026-11-26T10:51:23+08:00","source":"github-actions","archive":"hello-stack.tgz"}
+# {"at":"2026-11-26T10:56:08+08:00","source":"github-actions","archive":"hello-stack.tgz","phase":"ok"}
 ```
 
-`source` 是 `github-actions` 就是 CI/CD 跑的，`local-sim` 是本机模拟、`manual` 是手动调用
+`source` 是 `github-actions` 就是 CI/CD 跑的，`manual` 是 `.\deploy.ps1` 或手动调用
 `scripts/deploy-remote.sh`。时间戳比最后一次 push 新，就说明 CD 真的跑通了。
+
+只有 `.deploy.started` 而没有 `.deploy`（或 `phase` 不是 `ok`），说明那次部署中途失败了：
+解包后先写 `.deploy.started`，健康检查通过才写 `.deploy`；构建失败和就绪超时都会自动回滚到上一版。
 
 手动部署仍然可用：
 

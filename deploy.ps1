@@ -204,6 +204,22 @@ if (-not (Test-Health)) {
     exit 1
 }
 
+# 部署指纹：和 GitHub Actions 那套写法保持一致，
+# 这样服务器上 cat /opt/hello-stack/.deploy 就能看出最后一版是 CD 还是手动部署的
+try {
+    $markerJson = '{"at":"' + (Get-Date -Format 'yyyy-MM-ddTHH:mm:ssK') +
+                  '","source":"manual","archive":"' + (Split-Path $LocalTgz -Leaf) + '","phase":"ok"}'
+    $markerFile = Join-Path $env:TEMP 'hello-stack-deploy.json'
+    # 用 scp 传文件，别拼进 ssh 命令：JSON 里的双引号会被 PowerShell / shell 吃掉
+    [System.IO.File]::WriteAllText($markerFile, $markerJson + "`n")
+    scp -q $markerFile "$SshTarget`:$RemoteApp/.deploy"
+    if ($LASTEXITCODE -ne 0) { throw "scp 传指纹失败" }
+    Write-Host "    已写部署指纹 .deploy（source=manual）" -ForegroundColor DarkGray
+}
+catch {
+    Write-Host "    写部署指纹失败（不影响部署结果）" -ForegroundColor Yellow
+}
+
 # ---------- 7. 清理本地临时包 ----------
 Remove-Item $LocalTgz -Force -ErrorAction SilentlyContinue
 Invoke-Remote "ls -t $RemoteRoot/*.tgz 2>/dev/null | tail -n +6 | xargs -r rm -f" | Out-Null
