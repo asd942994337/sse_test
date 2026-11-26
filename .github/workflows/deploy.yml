@@ -24,9 +24,20 @@ jobs:
       - name: Check deploy secrets
         id: check
         run: |
-          if [ -z "${{ secrets.DEPLOY_HOST }}" ] || [ -z "${{ secrets.DEPLOY_SSH_KEY }}" ]; then
+          missing=""
+          if [ -z "${{ secrets.DEPLOY_HOST }}" ]; then missing="$missing DEPLOY_HOST"; fi
+          if [ -z "${{ secrets.DEPLOY_USER }}" ]; then missing="$missing DEPLOY_USER"; fi
+          if [ -z "${{ secrets.DEPLOY_SSH_KEY }}" ]; then missing="$missing DEPLOY_SSH_KEY"; fi
+          if [ -n "$missing" ]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "::warning::DEPLOY_HOST / DEPLOY_SSH_KEY 未配置，跳过部署"
+            echo "::warning::缺少 Secrets:$missing —— 跳过部署"
+            {
+              echo "### ⚠️ 部署已跳过"
+              echo ""
+              echo "缺少 Secrets:\`$missing\`"
+              echo ""
+              echo "到 Settings → Secrets and variables → Actions 补齐后，重新运行本工作流。"
+            } >> "$GITHUB_STEP_SUMMARY"
           fi
 
       - name: Package
