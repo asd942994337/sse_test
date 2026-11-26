@@ -77,6 +77,12 @@ jobs:
         run: |
           scp -P "$DEPLOY_PORT" /tmp/app.tgz \
             "$DEPLOY_USER@$DEPLOY_HOST:/tmp/hello-stack.tgz"
+          # 部署脚本也 scp 过去，**不要**用 `ssh "bash -s ..." < script` 喂 stdin：
+          # docker compose 构建时会从 stdin 读 bake 定义（日志里的
+          # "#1 reading from stdin ... done"），会把还没执行的脚本行抢走，
+          # bash 读到 EOF 就静默退出 —— 表现是「好像部署成功了，但没写 .deploy」。
+          scp -P "$DEPLOY_PORT" scripts/deploy-remote.sh \
+            "$DEPLOY_USER@$DEPLOY_HOST:/tmp/deploy-remote.sh"
 
       - name: Deploy
         if: steps.check.outputs.skip != 'true'
@@ -84,4 +90,4 @@ jobs:
           # $1 = 归档路径；$2 = 来源标记，落在服务器 /opt/hello-stack/.deploy 里，
           # 这样不用翻 Actions 日志也能在服务器上看出「这一版是 CI 部署的还是手动部署的」
           ssh -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" \
-            "bash -s /tmp/hello-stack.tgz github-actions" < scripts/deploy-remote.sh
+            "bash /tmp/deploy-remote.sh /tmp/hello-stack.tgz github-actions" </dev/null

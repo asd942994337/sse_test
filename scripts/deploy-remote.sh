@@ -66,14 +66,26 @@ mv "$NEXT" "$APP"
 echo "[deploy] docker compose up -d --build"
 cd "$APP"
 # 构建失败也要回到上一版：否则新代码已经落地、容器还是旧的，最容易被误判成「部署成功」
-docker compose up -d --build || rollback
+docker compose up -d --build </dev/null || rollback
+
+# nginx 配置是 bind mount 的**文件**，而部署是换目录：容器的 mount 还指着旧 inode，
+# `nginx -s reload` 读到的仍是旧配置（改了等于没改，而且没有任何报错）。
+# 所以这里比 md5：配置变了就重建 web 容器，没变才用 reload。
+STATE="$ROOT/$NAME.state"
+mkdir -p "$STATE"
+CONF_MD5="$(md5sum nginx/default.conf | awk '{print $1}')"
+if [ "$(cat "$STATE/nginx-conf.md5" 2>/dev/null || true)" != "$CONF_MD5" ]; then
+  echo "[deploy] nginx conf changed -> recreate web"
+  docker compose up -d --force-recreate web </dev/null || rollback
+  echo "$CONF_MD5" > "$STATE/nginx-conf.md5"
+else
+  echo "[deploy] nginx conf unchanged -> reload"
+  docker compose exec -T web nginx -s reload </dev/null >/dev/null 2>&1 \
+    && echo "[deploy] nginx reloaded" \
+    || echo "[deploy] nginx reload skipped"
+fi
 
 echo "[deploy] wait for readiness"
-# nginx 配置是 bind mount 进容器的：换了目录、配置改了，容器里跑的还是旧配置，
-# 必须 reload 一次才生效（挂了也不影响站点，旧 worker 继续服务）
-docker compose exec -T web nginx -s reload >/dev/null 2>&1 \
-  && echo "[deploy] nginx reloaded" \
-  || echo "[deploy] nginx reload skipped"
 for _ in $(seq 1 30); do
   code=$(curl -s -o /dev/null -w '%{http_code}' -m 5 "http://127.0.0.1:$PORT/api/ready" || true)
   if [ "$code" = "200" ]; then

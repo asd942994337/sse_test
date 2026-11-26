@@ -185,13 +185,14 @@ if ($NoBuild) {
 $psOut = Invoke-Remote "cd $RemoteApp && docker compose ps"
 $psOut -split "`n" | Where-Object { $_ -ne '' } | ForEach-Object { Write-Host "    $_" }
 
-# Nginx 配置是 bind mount，改了不会自动生效；reload 一次让新配置和 DNS 解析生效
+# Nginx 配置是 bind mount 的**文件**，而部署是换目录：容器里的 mount 还指着旧 inode，
+# `nginx -s reload` 读到的仍是旧配置（改了等于没改）。直接重建 web（约 1~2 秒）最省心。
 try {
-    Invoke-Remote "cd $RemoteApp && docker compose exec -T web nginx -s reload" | Out-Null
-    Write-Host "    Nginx 已 reload" -ForegroundColor DarkGray
+    Invoke-Remote "cd $RemoteApp && docker compose up -d --force-recreate web" | Out-Null
+    Write-Host "    已重建 web（nginx 配置一定生效）" -ForegroundColor DarkGray
 }
 catch {
-    Write-Host "    Nginx reload 跳过（web 可能还没起来）" -ForegroundColor Yellow
+    Write-Host "    web 重建失败（不影响 api，稍后手动 docker compose up -d web）" -ForegroundColor Yellow
 }
 
 # ---------- 6. 健康检查 ----------
